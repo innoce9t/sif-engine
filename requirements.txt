@@ -1,0 +1,21 @@
+# Stage 0 (current)
+chromadb>=1.5.0
+pillow>=10.0.0
+
+# Stage 1 (real models) — uncomment as implemented
+# ultralytics>=8.3.0        # YOLOv10n
+# onnxruntime>=1.17.0       # ONNX inference
+# insightface>=0.7.3        # face embeddings (optional module)
+# paddleocr>=2.7.0          # OCR
+# ollama>=0.3.0             # Moondream2 client
+# sentence-transformers>=3.0.0  # nomic-embed-text
+
+# Stage 5 (PDF + API) — uncomment as implemented
+# pdfplumber>=0.11.0
+# pdf2image>=1.17.0
+# fastapi>=0.115.0
+# uvicorn>=0.30.0
+
+# Dev
+pytest>=8.0.0
+psutil>=5.9.0              # RAM-aware worker sizing (Stage 4)

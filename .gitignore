@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# SIF runtime data
+sif_data/
+chroma/
+*.db
+*.sqlite
+
+# Models (downloaded separately, 2.5GB+)
+models/
+*.onnx
+*.pt
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
