@@ -15,7 +15,7 @@ from .embedding import embed
 
 
 def search(store: Store, query: str, limit: int = 10) -> list[dict]:
-    q = embed(query)
+    q = embed(query, kind="query")
     if not any(q):
         return []
 

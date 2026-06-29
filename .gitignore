@@ -18,6 +18,9 @@ models/
 *.onnx
 *.pt
 
+# Local sample/test images (e.g. third-party demo photos — not for distribution)
+sample_photos/
+
 # OS / editor
 .DS_Store
 .idea/

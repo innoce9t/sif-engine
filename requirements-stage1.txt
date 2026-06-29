@@ -1,0 +1,16 @@
+# Stage 1 model dependencies — heavy (~2.5GB of weights downloaded on first use)
+# and best installed on the target machine. Everything here is OPTIONAL: when a
+# dependency is missing, the corresponding extractor/embedder transparently
+# falls back to its deterministic stub, so the pipeline always runs.
+#
+#   pip install -r requirements-stage1.txt
+#
+# Moondream2 also needs a running Ollama daemon serving the model:
+#   ollama pull moondream
+
+ultralytics>=8.3.0             # YOLOv10n object detection
+onnxruntime>=1.17.0            # ONNX inference backend
+paddleocr>=2.7.0              # local multilingual OCR (incl. Arabic)
+ollama>=0.3.0                 # Moondream2 client (requires the Ollama daemon)
+sentence-transformers>=3.0.0  # nomic-embed-text-v1.5
+insightface>=0.7.3            # OPTIONAL faces (off unless SIF_ENABLE_FACES=1)

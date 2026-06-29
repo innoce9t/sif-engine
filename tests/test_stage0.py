@@ -10,6 +10,11 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# These tests validate the Stage 0 stub skeleton and assert stub-specific output
+# (deterministic objects, the stub embedder's model name). Force stubs so they
+# stay hermetic even when real Stage 1 models are installed in the environment.
+os.environ["SIF_USE_STUBS"] = "1"
+
 from PIL import Image
 from sif.store import Store
 from sif.pipeline import process, build_visual_input, build_text_input
