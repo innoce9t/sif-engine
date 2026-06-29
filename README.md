@@ -4,7 +4,8 @@ Local-first visual asset intelligence. Pre-compute semantic metadata once,
 query forever — without sending raw images to a cloud API.
 
 **Docs:** [architecture decisions](docs/adr/) ·
-[Stage 1 real-model findings](docs/stage1-findings.md)
+[Stage 1 real-model findings](docs/stage1-findings.md) ·
+[Stage 3 retrieval findings](docs/stage3-findings.md)
 
 ## Build Stages
 
@@ -13,7 +14,7 @@ query forever — without sending raw images to a cloud API.
 | 0 | Walking Skeleton | ✅ DONE | End-to-end pipeline with stub models. Index + search round-trips. |
 | 1 | Alpha | ✅ DONE | Real models behind identical interfaces (YOLOv10n, InsightFace, Moondream2, PaddleOCR, nomic-embed) with transparent stub fallback. |
 | 2 | Beta  | ✅ DONE | Outbox storage, crash recovery, deletion lifecycle, 3-tier dedup, WAL. |
-| 3 | MVP   | pending | Multi-vector retrieval, page-entity fusion, RRF, gated re-rank. |
+| 3 | MVP   | ✅ DONE | Multi-vector retrieval, RRF fusion (absentee fix), gated cross-encoder re-rank. |
 | 4 | v1.0  | pending | Decoupled stages: extraction pool → vlm_queue → dedicated VLM worker. |
 | 5 | v1.1  | pending | Multi-page PDF ingestion + FastAPI query layer. |
 | 6 | v1.2  | pending | CLI polish, results UI, generated docs. |
