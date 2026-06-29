@@ -15,7 +15,7 @@ import os
 import sys
 
 from .store import Store
-from .pipeline import process
+from .ingest import ingest
 from .query import search
 
 
@@ -37,13 +37,14 @@ def cmd_index(args):
         print(f"No images found at {args.path}")
         return
 
+    tally: dict[str, int] = {}
     for i, path in enumerate(targets, 1):
-        sif = process(path)
-        store.upsert(sif)
-        print(f"[{i}/{len(targets)}] indexed {os.path.basename(path)} "
-              f"-> caption='{sif.scene.caption}' objects={[o.label for o in sif.objects]} "
-              f"({sif.meta['processing_ms']}ms)")
-    print(f"\nDone. {store.count()} assets in index.")
+        r = ingest(store, path)               # dedup-aware, crash-safe
+        tally[r.status] = tally.get(r.status, 0) + 1
+        extra = f" ({r.detail})" if r.detail else ""
+        print(f"[{i}/{len(targets)}] {r.status:9} {os.path.basename(path)}{extra}")
+    summary = ", ".join(f"{k}={v}" for k, v in sorted(tally.items()))
+    print(f"\nDone. {store.count()} assets in index. [{summary}]")
     store.close()
 
 
@@ -70,8 +71,23 @@ def cmd_stats(args):
     store.close()
 
 
+def cmd_reconcile(args):
+    store = Store(args.data)
+    stats = store.reconcile()
+    print(f"Reconciled: tombstones finished={stats['tombstones_finished']}, "
+          f"orphan vectors purged={stats['orphans_purged']}")
+    store.close()
+
+
+def cmd_serve(args):
+    os.environ.setdefault("SIF_DATA", args.data)
+    import uvicorn
+    print(f"SIF Engine UI at http://{args.host}:{args.port}  (data: {args.data})")
+    uvicorn.run("sif.api:app", host=args.host, port=args.port, reload=False)
+
+
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="sif", description="SIF Engine (Stage 0)")
+    p = argparse.ArgumentParser(prog="sif", description="SIF Engine")
     p.add_argument("--data", default="./sif_data", help="data directory")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -86,6 +102,14 @@ def main(argv=None):
 
     pst = sub.add_parser("stats", help="index stats")
     pst.set_defaults(func=cmd_stats)
+
+    pr = sub.add_parser("reconcile", help="purge orphan vectors + finish tombstones")
+    pr.set_defaults(func=cmd_reconcile)
+
+    pv = sub.add_parser("serve", help="launch the web UI")
+    pv.add_argument("--host", default="127.0.0.1")
+    pv.add_argument("--port", type=int, default=8000)
+    pv.set_defaults(func=cmd_serve)
 
     args = p.parse_args(argv)
     args.func(args)
