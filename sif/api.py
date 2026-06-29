@@ -270,7 +270,8 @@ $('#searchBtn').onclick = async () => {
     const r = await fetch('/api/search?q=' + encodeURIComponent(q));
     const d = await r.json();
     box.innerHTML = d.results.length ? d.results.map(h =>
-      `<div class="hit"><strong>${h.distance.toFixed(3)}</strong> ${esc(h.path.split(/[\\/]/).pop())}<br>
+      `<div class="hit"><strong>${(h.score||0).toFixed(4)}</strong> ${esc(h.path.split(/[\\/]/).pop())}
+       ${h.reranked?'<span class="muted">· re-ranked</span>':''}<br>
        <span class="muted">${esc(h.caption||'')}</span></div>`).join('')
       : '<span class="muted">no results</span>';
   } catch(e){ box.innerHTML = '<span class="err">'+e.message+'</span>'; }

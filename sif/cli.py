@@ -55,9 +55,10 @@ def cmd_search(args):
         print("No results.")
         store.close()
         return
-    print(f"Results for '{args.query}':\n")
+    tag = " (re-ranked)" if results and results[0].get("reranked") else ""
+    print(f"Results for '{args.query}'{tag}:\n")
     for r in results:
-        print(f"  {r['distance']:.4f}  {os.path.basename(r['path'])}")
+        print(f"  {r['score']:.5f}  {os.path.basename(r['path'])}")
         print(f"          caption: {r['caption']}")
         print(f"          objects: {', '.join(r['objects'])}\n")
     store.close()
