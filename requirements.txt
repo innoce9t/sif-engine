@@ -2,19 +2,20 @@
 chromadb>=1.5.0
 pillow>=10.0.0
 
-# Stage 1 (real models) — uncomment as implemented
-# ultralytics>=8.3.0        # YOLOv10n
-# onnxruntime>=1.17.0       # ONNX inference
-# insightface>=0.7.3        # face embeddings (optional module)
-# paddleocr>=2.7.0          # OCR
-# ollama>=0.3.0             # Moondream2 client
-# sentence-transformers>=3.0.0  # nomic-embed-text
+# Web API + demo UI (lightweight, pure-Python)
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9
 
-# Stage 5 (PDF + API) — uncomment as implemented
+# Stage 1 (real models) — heavy; kept in a separate file so this base set stays
+# lightweight and installable everywhere. Install with:
+#     pip install -r requirements-stage1.txt
+# The engine runs without them: each extractor/embedder falls back to a
+# deterministic stub when its dependency (or the Ollama daemon) is unavailable.
+
+# Stage 5 (PDF) — uncomment as implemented
 # pdfplumber>=0.11.0
 # pdf2image>=1.17.0
-# fastapi>=0.115.0
-# uvicorn>=0.30.0
 
 # Dev
 pytest>=8.0.0
