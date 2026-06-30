@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import threading
 
 from ..schema import Face
 
 LABEL = "insightface-buffalo_l"
 
 _app = None
+_lock = threading.Lock()  # Stage 4: extraction runs in parallel; load once
 
 
 def is_available() -> bool:
@@ -28,10 +30,13 @@ def is_available() -> bool:
 def _get_app():
     global _app
     if _app is None:
-        from insightface.app import FaceAnalysis
+        with _lock:
+            if _app is None:
+                from insightface.app import FaceAnalysis
 
-        _app = FaceAnalysis(name=os.environ.get("SIF_FACE_MODEL", "buffalo_l"))
-        _app.prepare(ctx_id=-1)  # -1 = CPU
+                app = FaceAnalysis(name=os.environ.get("SIF_FACE_MODEL", "buffalo_l"))
+                app.prepare(ctx_id=-1)  # -1 = CPU
+                globals()["_app"] = app
     return _app
 
 

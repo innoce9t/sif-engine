@@ -15,7 +15,7 @@ query forever — without sending raw images to a cloud API.
 | 1 | Alpha | ✅ DONE | Real models behind identical interfaces (YOLOv10n, InsightFace, Moondream2, PaddleOCR, nomic-embed) with transparent stub fallback. |
 | 2 | Beta  | ✅ DONE | Outbox storage, crash recovery, deletion lifecycle, 3-tier dedup, WAL. |
 | 3 | MVP   | ✅ DONE | Multi-vector retrieval, RRF fusion (absentee fix), gated cross-encoder re-rank. |
-| 4 | v1.0  | pending | Decoupled stages: extraction pool → vlm_queue → dedicated VLM worker. |
+| 4 | v1.0  | ✅ DONE | Decoupled concurrent pipeline (extraction pool → VLM worker → single writer), RAM-aware sizing, benchmark harness. |
 | 5 | v1.1  | pending | Multi-page PDF ingestion + FastAPI query layer. |
 | 6 | v1.2  | pending | CLI polish, results UI, generated docs. |
 
@@ -113,3 +113,30 @@ python -m sif.cli serve                   # http://127.0.0.1:8000
 
 Endpoints: `POST /api/process` (upload → SIF), `GET /api/search?q=`,
 `GET /api/stats`. Interactive API docs at `/docs`.
+
+## Stage 4 — v1.0 (concurrency + benchmarks)
+
+Ingestion runs as a decoupled pipeline ([ADR 0003](docs/adr/0003-threads-not-processes-for-concurrency.md)):
+
+```
+N extraction workers  ->  vlm_queue  ->  1 VLM worker  ->  write_queue  ->  1 writer
+```
+
+- Extraction workers (RAM-aware count) run the cheap parallel extractors and
+  never touch the VLM, so they never block on it or thrash model weights.
+- One dedicated VLM worker runs the memory-bound scene model sequentially.
+- One dedicated writer is the single storage mutation point — what makes the
+  Stage 2 outbox ordering safe under concurrency.
+- Threads (not processes): ONNX/Paddle/torch release the GIL during inference,
+  so one shared in-memory copy of each model fits the RAM budget.
+
+```bash
+python -m sif.cli index <dir>                 # concurrent by default
+python -m sif.cli index <dir> --workers 4     # pin the pool size
+python -m sif.cli index <dir> --sequential    # single-threaded fallback
+python -m sif.cli bench <dir>                  # measured latency/RSS/throughput
+```
+
+Worker count is computed from available RAM (`workers.recommended_workers`):
+`floor((budget − VLM_reserve − base) / per_worker)`, capped to CPU count
+(budget = 70% RAM; tune via `SIF_RAM_BUDGET_FRAC`, `SIF_PER_WORKER_MB`, …).

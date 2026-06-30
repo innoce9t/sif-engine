@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import threading
 
 from ..schema import OCRResult
 
 LABEL = "paddleocr"
 
 _engine = None
+_lock = threading.Lock()  # Stage 4: extraction runs in parallel; load once
 
 
 def is_available() -> bool:
@@ -27,7 +29,11 @@ def is_available() -> bool:
 
 def _get_engine():
     global _engine
-    if _engine is None:
+    if _engine is not None:
+        return _engine
+    with _lock:
+        if _engine is not None:
+            return _engine
         from paddleocr import PaddleOCR
 
         kwargs = {"lang": os.environ.get("SIF_OCR_LANG", "en")}

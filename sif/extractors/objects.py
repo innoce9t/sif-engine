@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import threading
 
 from ..schema import DetectedObject
 
 LABEL = "yolov10n"
 
 _model = None  # cached across calls so weights load once per process
+_lock = threading.Lock()  # Stage 4: extraction runs in parallel; load once
 
 
 def is_available() -> bool:
@@ -30,9 +32,11 @@ def is_available() -> bool:
 def _get_model():
     global _model
     if _model is None:
-        from ultralytics import YOLO
+        with _lock:
+            if _model is None:
+                from ultralytics import YOLO
 
-        _model = YOLO(os.environ.get("SIF_YOLO_WEIGHTS", "yolov10n.pt"))
+                _model = YOLO(os.environ.get("SIF_YOLO_WEIGHTS", "yolov10n.pt"))
     return _model
 
 

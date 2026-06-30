@@ -1,14 +1,17 @@
 """
-Ingestion pipeline (Stage 1).
+Ingestion pipeline.
 
-Single-threaded orchestration: take a file path, run every extractor (real
-model when available, deterministic stub otherwise), assemble a SIF, build the
-two embedding-input strings (the multi-vector split), embed them, and return
-the populated SIF ready to store.
+Assembles a SIF from a file: run the extractors, build the two embedding-input
+strings (the multi-vector split), embed them.
 
-The extractor/embedder interfaces are identical to Stage 0, so storage and
-retrieval are untouched. Concurrency (RAM-aware workers + dedicated VLM queue)
-arrives in Stage 4.
+The work is split into three stage functions so Stage 4's concurrent runner can
+decouple them across threads (cheap parallel extractors -> single VLM worker ->
+single writer), while ``process()`` keeps the simple single-threaded path for
+the API, CLI single calls, and tests:
+
+  * ``extract_partial`` — file info/hashes + objects, faces, OCR (no VLM)
+  * ``add_scene``       — the memory-bound VLM caption (serialized in Stage 4)
+  * ``finalize``        — multi-vector embedding inputs + vectors + meta
 """
 from __future__ import annotations
 
@@ -34,8 +37,9 @@ def build_text_input(sif: SIF) -> str:
     return sif.ocr.full_text.strip()
 
 
-def process(path: str, file_hashes: dedup.Hashes | None = None) -> SIF:
-    t0 = time.time()
+def extract_partial(path: str, file_hashes: dedup.Hashes | None = None) -> SIF:
+    """Everything EXCEPT the VLM scene caption: file info/hashes + the cheap,
+    parallelizable extractors (objects, faces, OCR)."""
     sif = new_sif(path)
 
     # -- file info (model-free: three dedup hashes + size + resolution/format) --
@@ -53,13 +57,20 @@ def process(path: str, file_hashes: dedup.Hashes | None = None) -> SIF:
     except Exception:
         pass  # non-image / unreadable: leave schema defaults
 
-    # -- extraction (real models when available, else stubs) --
     sif.objects = extractors.extract_objects(path)
     sif.faces = extractors.extract_faces(path)   # [] unless SIF_ENABLE_FACES=1
-    sif.scene = extractors.extract_scene(path)
     sif.ocr = extractors.extract_ocr(path)
+    return sif
 
-    # -- multi-vector embedding inputs --
+
+def add_scene(sif: SIF) -> SIF:
+    """The memory-bound VLM caption. Serialized through one worker in Stage 4."""
+    sif.scene = extractors.extract_scene(sif.file.path)
+    return sif
+
+
+def finalize(sif: SIF, started_at: float | None = None) -> SIF:
+    """Build the multi-vector embedding inputs, embed them, and stamp meta."""
     sif.embeddings.visual_input = build_visual_input(sif)
     sif.embeddings.text_input = build_text_input(sif)
     sif.embeddings.visual = embed(sif.embeddings.visual_input, kind="document")
@@ -67,9 +78,18 @@ def process(path: str, file_hashes: dedup.Hashes | None = None) -> SIF:
     sif.embeddings.model = active_model()
 
     sif.meta = {
-        "processing_ms": round((time.time() - t0) * 1000, 2),
+        "processing_ms": round((time.time() - started_at) * 1000, 2) if started_at else 0.0,
         "stage": 1,
         "models_used": extractors.backends_used(),
         "embedding": active_model(),
     }
+    return sif
+
+
+def process(path: str, file_hashes: dedup.Hashes | None = None) -> SIF:
+    """Single-threaded composition of the three stages."""
+    t0 = time.time()
+    sif = extract_partial(path, file_hashes)
+    add_scene(sif)
+    finalize(sif, t0)
     return sif

@@ -44,7 +44,10 @@ class Store:
 
     # -- SQLite (source of truth) -----------------------------------------
     def _init_sqlite(self):
-        self.db = sqlite3.connect(self.db_path)
+        # check_same_thread=False: Stage 4 runs all writes through one dedicated
+        # writer thread (and reads in a single-threaded pre-pass), so access is
+        # already serialized — we just need the handle usable across threads.
+        self.db = sqlite3.connect(self.db_path, check_same_thread=False)
         # WAL + busy_timeout: concurrent readers don't block the writer, and a
         # contended write waits instead of failing fast. synchronous=NORMAL is
         # the WAL-recommended durability/throughput balance.

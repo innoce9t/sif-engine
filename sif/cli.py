@@ -22,29 +22,48 @@ from .query import search
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
 
-def cmd_index(args):
-    store = Store(args.data)
-    targets = []
-    if os.path.isdir(args.path):
-        for root, _, files in os.walk(args.path):
+def _collect(path: str) -> list[str]:
+    if os.path.isdir(path):
+        out = []
+        for root, _, files in os.walk(path):
             for f in files:
                 if os.path.splitext(f)[1].lower() in IMAGE_EXTS:
-                    targets.append(os.path.join(root, f))
-    else:
-        targets = [args.path]
+                    out.append(os.path.join(root, f))
+        return out
+    return [path]
 
+
+def cmd_index(args):
+    store = Store(args.data)
+    targets = _collect(args.path)
     if not targets:
         print(f"No images found at {args.path}")
         return
 
-    tally: dict[str, int] = {}
-    for i, path in enumerate(targets, 1):
-        r = ingest(store, path)               # dedup-aware, crash-safe
-        tally[r.status] = tally.get(r.status, 0) + 1
-        extra = f" ({r.detail})" if r.detail else ""
-        print(f"[{i}/{len(targets)}] {r.status:9} {os.path.basename(path)}{extra}")
-    summary = ", ".join(f"{k}={v}" for k, v in sorted(tally.items()))
-    print(f"\nDone. {store.count()} assets in index. [{summary}]")
+    if args.sequential:
+        tally: dict[str, int] = {}
+        for i, path in enumerate(targets, 1):
+            r = ingest(store, path)            # dedup-aware, crash-safe
+            tally[r.status] = tally.get(r.status, 0) + 1
+            extra = f" ({r.detail})" if r.detail else ""
+            print(f"[{i}/{len(targets)}] {r.status:9} {os.path.basename(path)}{extra}")
+        summary = ", ".join(f"{k}={v}" for k, v in sorted(tally.items()))
+        print(f"\nDone. {store.count()} assets in index. [{summary}]")
+        store.close()
+        return
+
+    # Concurrent decoupled pipeline (Stage 4).
+    from . import runner
+    done = [0]
+
+    def progress(label, path):
+        done[0] += 1
+        print(f"[{done[0]}] {label:9} {os.path.basename(path)}")
+
+    report = runner.index_paths(store, targets, max_workers=args.workers, progress=progress)
+    summary = ", ".join(f"{k}={v}" for k, v in sorted(report["stats"].items()))
+    print(f"\nDone. {store.count()} assets in index. "
+          f"[{summary}]  workers={report['workers']}  {report['wall_s']}s")
     store.close()
 
 
@@ -87,6 +106,15 @@ def cmd_serve(args):
     uvicorn.run("sif.api:app", host=args.host, port=args.port, reload=False)
 
 
+def cmd_bench(args):
+    from . import bench
+    targets = _collect(args.path)
+    if not targets:
+        print(f"No images found at {args.path}")
+        return
+    print(bench.format_report(bench.benchmark(args.data, targets, max_workers=args.workers)))
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="sif", description="SIF Engine")
     p.add_argument("--data", default="./sif_data", help="data directory")
@@ -94,6 +122,10 @@ def main(argv=None):
 
     pi = sub.add_parser("index", help="index an image or directory")
     pi.add_argument("path")
+    pi.add_argument("--workers", type=int, default=None,
+                    help="extraction workers (default: RAM-aware auto)")
+    pi.add_argument("--sequential", action="store_true",
+                    help="single-threaded ingest instead of the concurrent pipeline")
     pi.set_defaults(func=cmd_index)
 
     ps = sub.add_parser("search", help="semantic search")
@@ -111,6 +143,11 @@ def main(argv=None):
     pv.add_argument("--host", default="127.0.0.1")
     pv.add_argument("--port", type=int, default=8000)
     pv.set_defaults(func=cmd_serve)
+
+    pb = sub.add_parser("bench", help="benchmark the concurrent indexer")
+    pb.add_argument("path")
+    pb.add_argument("--workers", type=int, default=None)
+    pb.set_defaults(func=cmd_bench)
 
     args = p.parse_args(argv)
     args.func(args)
