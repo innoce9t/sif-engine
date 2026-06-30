@@ -125,6 +125,32 @@ def cmd_bench(args):
     print(bench.format_report(bench.benchmark(args.data, targets, max_workers=args.workers)))
 
 
+def cmd_watch(args):
+    import time
+    store = Store(args.data)
+    print(f"Watching {args.path} every {args.interval}s (Ctrl+C to stop)…")
+    try:
+        while True:
+            changed = 0
+            for path in _collect(args.path):
+                r = ingest(store, path)         # dedup makes re-scans idempotent
+                if r.status in ("indexed", "updated"):
+                    changed += 1
+                    print(f"  {r.status:9} {os.path.basename(path)}")
+            if changed:
+                print(f"  -> {store.count()} assets indexed")
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("\nstopped.")
+    finally:
+        store.close()
+
+
+def cmd_version(args):
+    from . import __version__
+    print(f"SIF Engine {__version__}")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="sif", description="SIF Engine")
     p.add_argument("--data", default="./sif_data", help="data directory")
@@ -158,6 +184,14 @@ def main(argv=None):
     pb.add_argument("path")
     pb.add_argument("--workers", type=int, default=None)
     pb.set_defaults(func=cmd_bench)
+
+    pw = sub.add_parser("watch", help="watch a folder and index new/changed files")
+    pw.add_argument("path")
+    pw.add_argument("--interval", type=float, default=5.0)
+    pw.set_defaults(func=cmd_watch)
+
+    pver = sub.add_parser("version", help="print version")
+    pver.set_defaults(func=cmd_version)
 
     args = p.parse_args(argv)
     args.func(args)

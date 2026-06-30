@@ -1,143 +1,167 @@
 # SIF Engine
 
-Local-first visual asset intelligence. Pre-compute semantic metadata once,
-query forever — without sending raw images to a cloud API.
+**Search your images and documents by meaning — locally, cheaply, and without
+sending a single pixel to the cloud.**
 
-**Docs:** [architecture decisions](docs/adr/) ·
-[Stage 1 real-model findings](docs/stage1-findings.md) ·
-[Stage 3 retrieval findings](docs/stage3-findings.md) ·
-[Stage 4 concurrency findings](docs/stage4-findings.md)
+The SIF (Semantic Index File) Engine pre-computes rich vision intelligence
+**once, on-device, at ingest** — objects, scene captions, OCR text, and
+embeddings — and stores it as a structured, queryable index. Every later search
+is cheap text/vector work instead of a fresh, expensive vision-API call.
 
-## Build Stages
+> Apache-2.0 · local-first · CPU-friendly · open-core ([COMMERCIAL.md](COMMERCIAL.md))
 
-| Stage | Name  | Status | What it delivers |
-|-------|-------|--------|------------------|
-| 0 | Walking Skeleton | ✅ DONE | End-to-end pipeline with stub models. Index + search round-trips. |
-| 1 | Alpha | ✅ DONE | Real models behind identical interfaces (YOLOv10n, InsightFace, Moondream2, PaddleOCR, nomic-embed) with transparent stub fallback. |
-| 2 | Beta  | ✅ DONE | Outbox storage, crash recovery, deletion lifecycle, 3-tier dedup, WAL. |
-| 3 | MVP   | ✅ DONE | Multi-vector retrieval, RRF fusion (absentee fix), gated cross-encoder re-rank. |
-| 4 | v1.0  | ✅ DONE | Decoupled concurrent pipeline (extraction pool → VLM worker → single writer), RAM-aware sizing, benchmark harness. |
-| 5 | v1.1  | pending | Multi-page PDF ingestion + FastAPI query layer. |
-| 6 | v1.2  | pending | CLI polish, results UI, generated docs. |
+---
 
-## Stage 0 — Walking Skeleton
+## The problem
+
+Teams sitting on large visual archives — marketing libraries, scanned document
+stores, claims photos, medical/legal imagery — want to *search them by meaning*.
+The default path is a cloud vision API, which has two hard problems:
+
+1. **Cost compounds.** Vision APIs bill **per call, every time**. Searching the
+   same library repeatedly pays for the same images over and over.
+2. **The data leaves.** In healthcare, legal, finance, and government, sending
+   raw images/documents to a third party is often simply **not allowed**.
+
+The key insight: *extracting* intelligence ("what's in this image?") and
+*querying* it ("find images about X") are different operations that today get
+conflated into one repeated, expensive cloud call.
+
+**SIF separates them: extract once, query forever.**
+
+```
+                        cloud vision API                 SIF Engine
+  cost of N queries     N × (vision call)                1 × (local extract) + N × (cheap vector search)
+  data location         leaves your infra                never leaves the machine
+```
+
+For a library queried many times, the per-query vision cost trends to **~zero**
+after a one-time local ingest — the amortized saving is large (the design target
+is ~90%+), and the raw data stays put. *(Exact savings depend on your query/image
+ratio and provider pricing; the structural shift — pay once, not per query — is
+the point.)*
+
+---
+
+## What it does
+
+- **Multi-model extraction** at ingest — object detection (YOLOv10n), scene
+  captioning (Moondream2 via Ollama), OCR (PaddleOCR, multilingual incl.
+  Arabic), optional face embeddings (**off by default** — biometric privacy),
+  and text embeddings (nomic-embed-text v1.5).
+- **Semantic search** — natural-language queries over a **multi-vector** index
+  (separate visual and OCR-text spaces) fused with Reciprocal Rank Fusion and an
+  optional gated cross-encoder re-rank.
+- **Multi-page PDFs** — page-classified ingestion into a hierarchical index;
+  search returns the matching **page**.
+- **Crash-safe storage** — SQLite is the source of truth; the ChromaDB vector
+  index is derived and rebuildable. Outbox ordering + a startup recovery sweep
+  mean a crash never corrupts the index.
+- **Concurrent ingestion** — a decoupled pipeline (extraction pool → VLM worker
+  → single writer) with RAM-aware worker sizing and a benchmark harness.
+- **Runs without the models** — every extractor falls back to a deterministic
+  stub when its dependency is missing, so the engine always runs (great for CI).
+- **Interfaces** — a CLI and a FastAPI web inspector (upload → see the SIF JSON
+  + semantic search).
+
+---
+
+## Quickstart
 
 ```bash
-pip install chromadb pillow
-python -m sif.cli index sample_photos
-python -m sif.cli search "outdoor urban scene building"
-python -m sif.cli stats
-python tests/test_stage0.py
+pip install -r requirements.txt           # base engine (runs on stubs)
+
+# Real models (heavier; best on Python 3.11/3.12):
+pip install -r requirements-stage1.txt    # YOLO, PaddleOCR, nomic, etc.
+ollama pull moondream                      # local VLM for captions
+
+python -m sif.cli index ./my_photos        # concurrent, dedup-aware ingest
+python -m sif.cli search "public transport in the city"
+python -m sif.cli serve                    # web UI at http://127.0.0.1:8000
 ```
 
-### What's real in Stage 0
-- Project structure & package layout
-- SIF schema (the metadata format) — full shape
-- Dual-store wiring: SQLite (source of truth) + ChromaDB (2 collections)
-- Multi-vector split: visual input excludes OCR text (the v2 dilution fix, baked in from day one)
-- SQLite-validation of every search hit (orphan vectors can't leak)
-- CLI: index / search / stats
+Other commands: `index <pdf>` (PDFs), `watch <dir>` (incremental), `stats`,
+`reconcile`, `bench <dir>`, `version`. Set `SIF_USE_STUBS=1` to force the
+model-free path anywhere.
 
-### What's stubbed (becomes real in Stage 1)
-- All models return deterministic placeholder output
-- Embedding is a hashing function, not a semantic model
+---
 
-## Stage 1 — Alpha (real models)
-
-Real extractors and embedder replace the stubs *behind the identical
-interfaces*, so storage and retrieval are untouched. Each backend loads lazily
-and **falls back to its stub** when its dependency (or, for the VLM, the Ollama
-daemon) is unavailable — the engine always runs. `meta.models_used` in every
-SIF reports which backend actually answered.
-
-```bash
-pip install -r requirements-stage1.txt   # heavy; ~2.5GB of weights on first use
-ollama pull moondream                     # local VLM daemon for scene captions
-python -m sif.cli index sample_photos     # now uses real models when present
-```
-
-| Stage | Model | Module | Notes |
-|-------|-------|--------|-------|
-| Objects | YOLOv10n (Ultralytics) | `extractors/objects.py` | weights auto-download |
-| OCR | PaddleOCR | `extractors/ocr.py` | multilingual incl. Arabic |
-| Scene | Moondream2 via Ollama | `extractors/scene.py` | needs running Ollama daemon |
-| Faces | InsightFace buffalo_l | `extractors/faces.py` | **off by default** (biometric privacy) |
-| Embedding | nomic-embed-text v1.5 | `embedding.py` | 384-d; hash fallback is 64-d |
-
-### Environment flags
-- `SIF_USE_STUBS=1` — force deterministic stubs everywhere (CI / no-model envs).
-- `SIF_ENABLE_FACES=1` — opt in to face embeddings (GDPR/BIPA/UAE PDPL surface).
-- `SIF_VLM_MODEL`, `SIF_YOLO_WEIGHTS`, `SIF_OCR_LANG`, `SIF_FACE_MODEL` — backend overrides.
-- `SIF_OCR_MKLDNN=1` — re-enable PaddleOCR's MKL-DNN (off by default; it crashes
-  on some CPUs with PaddleOCR 3.x — `Unimplemented ... onednn_instruction`).
-
-## Stage 2 — Beta (storage hardening)
-
-SQLite is the crash-safe source of truth; ChromaDB is a derived, rebuildable
-index. Asset identity is the file path; content hashes drive dedup ([ADR 0002](docs/adr/0002-asset-identity-and-dedup.md)).
-
-- **Outbox ordering** — write the SQLite row `indexed=0` → vectors → `indexed=1`.
-  A crash never leaves a live row without vectors.
-- **Recovery sweep** — on startup, replay any `indexed=0` row from its stored
-  SIF JSON (no models needed — the vectors live in the JSON).
-- **Update dark-window fix** — an update flips `indexed=0` *before* purging old
-  vectors, so an interrupted update is recoverable too.
-- **Delete + reconcile** — deletes tombstone then purge; `reconcile` finishes
-  interrupted tombstones and purges orphan vectors (ChromaDB ids with no live
-  SQLite parent). Query results are also validated against SQLite, so orphans
-  never surface even before a sweep.
-- **Three-tier dedup** — sha256 (exact) → pixel hash (metadata-only edits) →
-  perceptual dHash (near-duplicates, Hamming threshold).
-- **WAL** + `busy_timeout=5000` + a single write path.
-
-```bash
-python -m sif.cli index sample_photos    # re-running skips unchanged/duplicate files
-python -m sif.cli reconcile              # purge orphans + finish tombstones
-```
-
-> The single dedicated **writer coroutine** is deferred to Stage 4, where
-> concurrency actually exists — the ordering guarantees here are what make
-> wrapping these methods in one async writer safe. Building the async machinery
-> now, against a single-threaded pipeline, would be premature.
-
-## Web UI
-
-A FastAPI demo frontend: upload an image, see the full SIF JSON (objects,
-caption, OCR, embeddings, backends used), and run semantic search over the
-index. Uses real models if available, stubs otherwise.
-
-```bash
-pip install -r requirements.txt          # fastapi/uvicorn are in the base set
-python -m sif.cli serve                   # http://127.0.0.1:8000
-# real models: run from the Stage-1 venv with Ollama up
-```
-
-Endpoints: `POST /api/process` (upload → SIF), `GET /api/search?q=`,
-`GET /api/stats`. Interactive API docs at `/docs`.
-
-## Stage 4 — v1.0 (concurrency + benchmarks)
-
-Ingestion runs as a decoupled pipeline ([ADR 0003](docs/adr/0003-threads-not-processes-for-concurrency.md)):
+## How it works
 
 ```
-N extraction workers  ->  vlm_queue  ->  1 VLM worker  ->  write_queue  ->  1 writer
+INGEST
+  file ─▶ hashes + objects + OCR ─▶ [vlm_queue] ─▶ scene caption ─▶ embeddings
+         (N parallel workers)                       (1 VLM worker)        │
+                                                                          ▼
+                                              SQLite row (source of truth) + 2 vector
+                                              collections (visual / text)  ── 1 writer
+
+QUERY
+  text ─▶ embed ─▶ retrieve top-K from BOTH collections ─▶ aggregate to page/asset
+       ─▶ RRF fuse (absentee-safe) ─▶ validate vs SQLite ─▶ gated re-rank ─▶ results
 ```
 
-- Extraction workers (RAM-aware count) run the cheap parallel extractors and
-  never touch the VLM, so they never block on it or thrash model weights.
-- One dedicated VLM worker runs the memory-bound scene model sequentially.
-- One dedicated writer is the single storage mutation point — what makes the
-  Stage 2 outbox ordering safe under concurrency.
-- Threads (not processes): ONNX/Paddle/torch release the GIL during inference,
-  so one shared in-memory copy of each model fits the RAM budget.
+The **SIF schema** is the contract every layer depends on: per asset it records
+`file` (hashes, resolution), `objects`, `faces`, `scene` (caption + tags),
+`ocr`, and the multi-vector `embeddings` — with PDFs adding a hierarchical
+`pages[] → regions[]`. The visual vector deliberately **excludes OCR text** to
+avoid embedding dilution; OCR gets its own text vector.
 
-```bash
-python -m sif.cli index <dir>                 # concurrent by default
-python -m sif.cli index <dir> --workers 4     # pin the pool size
-python -m sif.cli index <dir> --sequential    # single-threaded fallback
-python -m sif.cli bench <dir>                  # measured latency/RSS/throughput
-```
+### Design decisions on record (ADRs)
+- [0001](docs/adr/0001-no-orchestrator-for-core-pipeline.md) — no agent
+  orchestrator (LangChain/LangGraph) for a fixed pipeline
+- [0002](docs/adr/0002-asset-identity-and-dedup.md) — asset identity = file
+  path; content hashes drive three-tier dedup
+- [0003](docs/adr/0003-threads-not-processes-for-concurrency.md) — threads (not
+  processes) so models load once and fit the RAM budget
 
-Worker count is computed from available RAM (`workers.recommended_workers`):
-`floor((budget − VLM_reserve − base) / per_worker)`, capped to CPU count
-(budget = 70% RAM; tune via `SIF_RAM_BUDGET_FRAC`, `SIF_PER_WORKER_MB`, …).
+### Measured & honest findings
+This was built **build → test → measure**, and the measurements corrected the
+design. Those write-ups are part of the artifact:
+- [Stage 1](docs/stage1-findings.md) — real-model integration surprises
+- [Stage 3](docs/stage3-findings.md) — an RRF over-crediting case (known
+  limitation; tunable via `SIF_RERANK_GAP`)
+- [Stage 4](docs/stage4-findings.md) — a concurrency bug the benchmark caught;
+  first measured numbers (peak RSS ~2GB, well under a 14GB budget)
+
+---
+
+## Build stages
+
+Built in independently runnable, design-reviewed stages — the commit history is
+the architectural-evolution story.
+
+| Stage | Name | Delivers |
+|-------|------|----------|
+| 0 | Walking skeleton | End-to-end pipeline with stub models |
+| 1 | Alpha | Real models behind identical interfaces + stub fallback |
+| 2 | Beta | Crash-safe storage, lifecycle, three-tier dedup, WAL |
+| 3 | MVP | Multi-vector retrieval, RRF fusion, gated re-rank |
+| 4 | v1.0 | Concurrent pipeline, RAM-aware sizing, benchmark harness |
+| 5 | v1.1 | Multi-page PDF ingestion (hierarchical, page-level retrieval) |
+| 6 | v1.2 | CLI ergonomics (watch/config), portfolio docs, license |
+
+## Configuration (env)
+
+| Variable | Purpose |
+|---|---|
+| `SIF_USE_STUBS=1` | force deterministic stubs everywhere |
+| `SIF_ENABLE_FACES=1` | opt in to face embeddings (off by default) |
+| `SIF_VLM_MODEL` | scene VLM served by Ollama (default `moondream`) |
+| `SIF_OCR_LANG` / `SIF_OCR_MKLDNN` | OCR language / re-enable MKL-DNN |
+| `SIF_RERANK_GAP` | re-rank gate (raise to re-rank more aggressively) |
+| `SIF_RAM_BUDGET_FRAC`, `SIF_PER_WORKER_MB`, … | RAM-aware worker sizing |
+
+## Honest limitations
+
+- Uses **small edge models** on purpose — it wins on cost/privacy/offline, not
+  on raw model quality.
+- It's an **archive/search** engine, not real-time video analytics.
+- A known **RRF ranking** edge case (an asset present in more collections can be
+  over-credited) is documented and gated behind a tunable knob, pending a
+  labeled relevance set to calibrate against.
+
+## License
+
+Apache-2.0 ([LICENSE](LICENSE)). Open-core model — see [COMMERCIAL.md](COMMERCIAL.md).
+© 2026 Ahsan Nawazish.

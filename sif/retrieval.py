@@ -20,10 +20,16 @@ Design-review fixes baked in here:
 """
 from __future__ import annotations
 
+import os
+
 K_RRF = 60
 DEFAULT_TOP_K = 50
 DEFAULT_WEIGHTS = {"visual": 1.0, "text": 1.0}
-RERANK_GAP = 0.05  # rerank when top-1 vs top-2 differ by less than this fraction
+# Rerank when top-1 vs top-2 differ by less than this fraction. Conservative by
+# default (bounds cross-encoder cost); raise via SIF_RERANK_GAP to re-rank more
+# aggressively, which improves quality on the known RRF over-crediting case
+# (docs/stage3-findings.md) at the cost of more compute per query.
+RERANK_GAP = float(os.environ.get("SIF_RERANK_GAP", "0.05"))
 
 
 def rrf_fuse(per_source_ranks: dict[str, dict[str, int]], top_k: int,
@@ -65,8 +71,11 @@ def relative_gap(scores: list[float]) -> float:
     return (scores[0] - scores[1]) / scores[0]
 
 
-def should_rerank(scores: list[float], threshold: float = RERANK_GAP) -> bool:
-    """True when the top two results are close enough to be ambiguous."""
+def should_rerank(scores: list[float], threshold: float | None = None) -> bool:
+    """True when the top two results are close enough to be ambiguous. The
+    threshold honors SIF_RERANK_GAP live when not passed explicitly."""
     if len(scores) < 2:
         return False
+    if threshold is None:
+        threshold = float(os.environ.get("SIF_RERANK_GAP", "0.05"))
     return relative_gap(scores) < threshold
