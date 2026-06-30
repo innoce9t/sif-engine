@@ -20,6 +20,7 @@ from .query import search
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+DOC_EXTS = {".pdf"}
 
 
 def _collect(path: str) -> list[str]:
@@ -27,7 +28,7 @@ def _collect(path: str) -> list[str]:
         out = []
         for root, _, files in os.walk(path):
             for f in files:
-                if os.path.splitext(f)[1].lower() in IMAGE_EXTS:
+                if os.path.splitext(f)[1].lower() in IMAGE_EXTS | DOC_EXTS:
                     out.append(os.path.join(root, f))
         return out
     return [path]
@@ -37,33 +38,39 @@ def cmd_index(args):
     store = Store(args.data)
     targets = _collect(args.path)
     if not targets:
-        print(f"No images found at {args.path}")
+        print(f"No images or PDFs found at {args.path}")
         return
 
-    if args.sequential:
-        tally: dict[str, int] = {}
-        for i, path in enumerate(targets, 1):
-            r = ingest(store, path)            # dedup-aware, crash-safe
-            tally[r.status] = tally.get(r.status, 0) + 1
-            extra = f" ({r.detail})" if r.detail else ""
-            print(f"[{i}/{len(targets)}] {r.status:9} {os.path.basename(path)}{extra}")
-        summary = ", ".join(f"{k}={v}" for k, v in sorted(tally.items()))
-        print(f"\nDone. {store.count()} assets in index. [{summary}]")
-        store.close()
-        return
+    images = [t for t in targets if os.path.splitext(t)[1].lower() in IMAGE_EXTS]
+    pdfs = [t for t in targets if os.path.splitext(t)[1].lower() in DOC_EXTS]
+    tally: dict[str, int] = {}
 
-    # Concurrent decoupled pipeline (Stage 4).
-    from . import runner
-    done = [0]
+    def bump(status):
+        tally[status] = tally.get(status, 0) + 1
 
-    def progress(label, path):
-        done[0] += 1
-        print(f"[{done[0]}] {label:9} {os.path.basename(path)}")
+    if images and not args.sequential:
+        # Concurrent decoupled pipeline (Stage 4) for images.
+        from . import runner
+        done = [0]
 
-    report = runner.index_paths(store, targets, max_workers=args.workers, progress=progress)
-    summary = ", ".join(f"{k}={v}" for k, v in sorted(report["stats"].items()))
-    print(f"\nDone. {store.count()} assets in index. "
-          f"[{summary}]  workers={report['workers']}  {report['wall_s']}s")
+        def progress(label, path):
+            done[0] += 1
+            print(f"[{done[0]}] {label:9} {os.path.basename(path)}")
+
+        report = runner.index_paths(store, images, max_workers=args.workers, progress=progress)
+        for k, v in report["stats"].items():
+            tally[k] = tally.get(k, 0) + v
+        images = []  # handled
+
+    # PDFs (and images under --sequential) go through the single-threaded path.
+    for path in images + pdfs:
+        r = ingest(store, path)
+        bump(r.status)
+        extra = f" ({r.detail})" if r.detail else ""
+        print(f"  {r.status:9} {os.path.basename(path)}{extra}")
+
+    summary = ", ".join(f"{k}={v}" for k, v in sorted(tally.items()))
+    print(f"\nDone. {store.count()} assets in index. [{summary}]")
     store.close()
 
 
@@ -77,7 +84,10 @@ def cmd_search(args):
     tag = " (re-ranked)" if results and results[0].get("reranked") else ""
     print(f"Results for '{args.query}'{tag}:\n")
     for r in results:
-        print(f"  {r['score']:.5f}  {os.path.basename(r['path'])}")
+        loc = os.path.basename(r['path'])
+        if r.get("page") is not None:
+            loc += f"  (page {r['page'] + 1})"
+        print(f"  {r['score']:.5f}  {loc}")
         print(f"          caption: {r['caption']}")
         print(f"          objects: {', '.join(r['objects'])}\n")
     store.close()

@@ -76,15 +76,41 @@ class Embeddings:
 
 
 @dataclass
+class Region:
+    """A sub-page visual region of a PDF page (Stage 5). Visual vectors bind to
+    regions, not whole pages — they are NOT 1:1 with the page text vector."""
+    region_id: str
+    bbox: list[float] = field(default_factory=list)       # [x0,y0,x1,y1] in page space
+    objects: list[DetectedObject] = field(default_factory=list)
+    scene: Scene = field(default_factory=Scene)
+    visual_input: str = ""
+    visual: list[float] = field(default_factory=list)
+
+
+@dataclass
+class Page:
+    """One page of a hierarchical PDF SIF (Stage 5). Text vectors bind to the
+    page; visual vectors bind to its regions."""
+    page_index: int
+    page_type: str = ""        # born_digital_text | scanned | mixed | figure
+    text: str = ""
+    text_input: str = ""
+    text_vector: list[float] = field(default_factory=list)
+    regions: list[Region] = field(default_factory=list)
+
+
+@dataclass
 class SIF:
     """The complete Semantic Index File for a single asset."""
     sif_version: str
     file: FileInfo
+    kind: str = "image"        # "image" | "pdf"
     objects: list[DetectedObject] = field(default_factory=list)
     faces: list[Face] = field(default_factory=list)
     scene: Scene = field(default_factory=Scene)
     ocr: OCRResult = field(default_factory=OCRResult)
     embeddings: Embeddings = field(default_factory=Embeddings)
+    pages: list[Page] = field(default_factory=list)   # populated for kind="pdf"
     meta: dict[str, Any] = field(default_factory=dict)
 
     # -- serialization helpers --------------------------------------------

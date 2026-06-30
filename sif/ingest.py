@@ -17,30 +17,40 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from . import dedup
+from . import dedup, pdf
 from .pipeline import process
 from .store import Store
 
 
 class Result(NamedTuple):
-    status: str          # indexed | updated | unchanged | duplicate
+    status: str          # indexed | updated | unchanged | duplicate | skipped
     path: str
-    detail: str = ""     # dup target id, or dedup tier
+    detail: str = ""     # dup target id, dedup tier, or skip reason
+
+
+def _build(path: str, h: dedup.Hashes):
+    """Produce a SIF — hierarchical for PDFs, flat for images."""
+    if pdf.is_pdf(path):
+        return pdf.process_pdf(path, file_hashes=h)
+    return process(path, file_hashes=h)
 
 
 def ingest(store: Store, path: str) -> Result:
+    if pdf.is_pdf(path) and not pdf.deps_available():
+        return Result("skipped", path, detail="pdf deps missing (pip install pdfplumber)")
+
     h = dedup.hashes(path)
 
     meta = store.get_meta(path)
     if meta is not None:
         if meta["sha256"] == h.sha256:
             return Result("unchanged", path)
-        store.update(process(path, file_hashes=h))
+        store.update(_build(path, h))
         return Result("updated", path)
 
     dup = store.find_duplicate(h)
     if dup is not None:
         return Result("duplicate", path, detail=f"{dup[1]}->{dup[0]}")
 
-    store.insert(process(path, file_hashes=h))
+    store.insert(_build(path, h))
     return Result("indexed", path)

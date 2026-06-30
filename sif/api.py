@@ -69,7 +69,11 @@ def api_process(file: UploadFile = File(...), save: str = Form("false")):
     JSON — even for a duplicate — and only the *storage* decision varies.
     """
     path = _save_upload(file)
-    sif = process(path)  # one inference, outside the lock
+    from . import pdf
+    if pdf.is_pdf(path) and pdf.deps_available():
+        sif = pdf.process_pdf(path)
+    else:
+        sif = process(path)  # one inference, outside the lock
     status = "not-saved"
     if save.lower() in ("1", "true", "on", "yes"):
         with _lock:

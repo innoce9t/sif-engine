@@ -78,17 +78,44 @@ class Store:
         self.text = self.chroma.get_or_create_collection("text")
 
     # -- vector helpers ---------------------------------------------------
-    def _write_vectors(self, sid: str, path: str, visual, text):
-        meta = {"path": path, "sif_id": sid}
-        if any(visual):
-            self.visual.upsert(ids=[sid], embeddings=[list(visual)], metadatas=[meta])
-        if any(text):
-            self.text.upsert(ids=[sid], embeddings=[list(text)], metadatas=[meta])
+    def _write_vectors_from_dict(self, sid: str, d: dict):
+        """Write an asset's vectors from its SIF dict. Handles both an image
+        (one visual + one text vector keyed by the doc id) and a PDF (page text
+        vectors + region visual vectors keyed under the doc). Every vector
+        carries metadata ``path=sid`` so purge/reconcile can find them."""
+        if d.get("kind") == "pdf":
+            for page in d.get("pages", []):
+                pidx = page.get("page_index")
+                tv = page.get("text_vector") or []
+                if any(tv):
+                    self.text.upsert(ids=[f"{sid}#p{pidx}"], embeddings=[list(tv)],
+                                     metadatas=[{"path": sid, "sif_id": sid, "page": pidx}])
+                for region in page.get("regions", []):
+                    vv = region.get("visual") or []
+                    if any(vv):
+                        self.visual.upsert(ids=[region["region_id"]], embeddings=[list(vv)],
+                                           metadatas=[{"path": sid, "sif_id": sid, "page": pidx}])
+        else:
+            emb = d.get("embeddings", {})
+            meta = {"path": sid, "sif_id": sid}
+            if any(emb.get("visual") or []):
+                self.visual.upsert(ids=[sid], embeddings=[list(emb["visual"])], metadatas=[meta])
+            if any(emb.get("text") or []):
+                self.text.upsert(ids=[sid], embeddings=[list(emb["text"])], metadatas=[meta])
 
     def _purge_vectors(self, sid: str):
-        # Deleting an absent id is a harmless no-op in ChromaDB.
-        self.visual.delete(ids=[sid])
-        self.text.delete(ids=[sid])
+        # Delete every vector belonging to this asset (image = 1 each; PDF = many
+        # page/region vectors). where=path catches them all; ids=[sid] is a
+        # belt-and-suspenders for the image case. Absent deletes are no-ops.
+        for coll in (self.visual, self.text):
+            try:
+                coll.delete(where={"path": sid})
+            except Exception:
+                pass
+            try:
+                coll.delete(ids=[sid])
+            except Exception:
+                pass
 
     # -- write lifecycle (outbox-ordered) ---------------------------------
     def insert(self, sif: SIF):
@@ -102,7 +129,7 @@ class Store:
              sif.file.phash, sif.to_json(indent=None)),
         )
         self.db.commit()
-        self._write_vectors(sid, sif.file.path, sif.embeddings.visual, sif.embeddings.text)
+        self._write_vectors_from_dict(sid, sif.to_dict())
         self.db.execute("UPDATE sif SET indexed=1 WHERE id=?", (sid,))
         self.db.commit()
 
@@ -118,7 +145,7 @@ class Store:
         )
         self.db.commit()
         self._purge_vectors(sid)
-        self._write_vectors(sid, sif.file.path, sif.embeddings.visual, sif.embeddings.text)
+        self._write_vectors_from_dict(sid, sif.to_dict())
         self.db.execute("UPDATE sif SET indexed=1 WHERE id=?", (sid,))
         self.db.commit()
 
@@ -146,9 +173,8 @@ class Store:
             "SELECT id, path, sif_json FROM sif WHERE state='active' AND indexed=0"
         ).fetchall()
         for sid, path, sif_json in rows:
-            emb = json.loads(sif_json).get("embeddings", {})
             self._purge_vectors(sid)  # idempotent: clear any partial write
-            self._write_vectors(sid, path, emb.get("visual", []), emb.get("text", []))
+            self._write_vectors_from_dict(sid, json.loads(sif_json))
             self.db.execute("UPDATE sif SET indexed=1 WHERE id=?", (sid,))
         self.db.commit()
         return len(rows)
@@ -164,13 +190,18 @@ class Store:
             self.db.execute("DELETE FROM sif WHERE id=?", (sid,))
         self.db.commit()
 
-        # 2. purge orphan vectors
+        # 2. purge orphan vectors — a vector is an orphan when its parent doc
+        # (metadata 'path', which works for PDF page/region ids too) is not a
+        # live SQLite row. Fall back to the id itself for legacy vectors.
         active = {r[0] for r in self.db.execute(
             "SELECT id FROM sif WHERE state='active'").fetchall()}
         orphans = 0
         for coll in (self.visual, self.text):
-            ids = coll.get().get("ids", [])
-            stranded = [i for i in ids if i not in active]
+            got = coll.get()
+            ids = got.get("ids", [])
+            metas = got.get("metadatas", []) or [{}] * len(ids)
+            stranded = [ids[i] for i in range(len(ids))
+                        if (metas[i] or {}).get("path", ids[i]) not in active]
             if stranded:
                 coll.delete(ids=stranded)
                 orphans += len(stranded)

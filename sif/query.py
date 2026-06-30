@@ -46,22 +46,49 @@ def _get_cross_encoder():
     return _cross
 
 
-def _doc(sif: dict) -> str:
-    """Text view of an asset for the cross-encoder (includes OCR)."""
-    parts = [
-        sif["scene"]["caption"],
-        " ".join(sif["scene"]["tags"]),
-        " ".join(o["label"] for o in sif["objects"]),
-        sif["ocr"]["full_text"],
-    ]
-    return " ".join(p for p in parts if p).strip()
+def _entity_of(vid: str) -> tuple[str, str, int | None]:
+    """Map a vector id to (entity_id, doc_id, page_index).
+
+    Image vectors have no '#' -> entity == doc == id, page None.
+    PDF vectors are ``{doc}#p{n}`` (page text) or ``{doc}#p{n}#r{m}`` (region) ->
+    the entity is the PAGE ``{doc}#p{n}`` (round-2 fix: fuse at the page, not the
+    raw vector, since page text and sub-page region vectors are not 1:1)."""
+    if "#" not in vid:
+        return vid, vid, None
+    parts = vid.split("#")
+    doc = parts[0]
+    page_tok = parts[1]                       # 'p{n}'
+    pidx = int(page_tok[1:]) if page_tok[1:].isdigit() else None
+    return f"{doc}#{page_tok}", doc, pidx
+
+
+def _result_for(entity: str, doc: str, pidx: int | None, sif: dict, score: float) -> dict:
+    """Build a result row + the text used for re-ranking, for an image asset or
+    a PDF page entity."""
+    if pidx is None:  # image
+        caption = sif["scene"]["caption"]
+        objects = [o["label"] for o in sif["objects"]]
+        text = " ".join([caption, " ".join(sif["scene"]["tags"]),
+                         " ".join(objects), sif["ocr"]["full_text"]]).strip()
+        return {"id": entity, "path": doc, "page": None, "score": round(score, 6),
+                "caption": caption, "objects": objects, "_text": text}
+    # PDF page entity
+    page = next((p for p in sif.get("pages", []) if p.get("page_index") == pidx), {})
+    region_caps = [r.get("scene", {}).get("caption", "") for r in page.get("regions", [])]
+    page_text = page.get("text", "")
+    caption = (page_text[:120] or next((c for c in region_caps if c), "")
+               or f"page {pidx + 1}")
+    objects = [o["label"] for r in page.get("regions", []) for o in r.get("objects", [])]
+    text = " ".join([page_text, *region_caps, " ".join(objects)]).strip()
+    return {"id": entity, "path": doc, "page": pidx, "score": round(score, 6),
+            "caption": caption, "objects": objects, "_text": text}
 
 
 def _neural_rerank(query: str, pool: list[dict]):
     ce = _get_cross_encoder()
     if ce is None:
         return pool, False
-    scores = ce.predict([(query, _doc(p["_sif"])) for p in pool])
+    scores = ce.predict([(query, p["_text"]) for p in pool])
     order = sorted(range(len(pool)), key=lambda i: float(scores[i]), reverse=True)
     return [pool[i] for i in order], True
 
@@ -72,33 +99,34 @@ def search(store: Store, query: str, limit: int = 10,
     if not any(q):
         return []
 
-    # 1-2. retrieve ranks from each collection
+    # 1. retrieve ranks from each collection, then 2. aggregate raw vectors up to
+    # their PAGE/asset ENTITY (best rank per entity).
     per_source: dict[str, dict[str, int]] = {}
+    entity_meta: dict[str, tuple[str, int | None]] = {}
     for name, coll in (("visual", store.visual), ("text", store.text)):
         n = coll.count()
         if n == 0:
             continue
         res = coll.query(query_embeddings=[q], n_results=min(top_k, n))
-        ids = res.get("ids", [[]])[0]
-        per_source[name] = {sid: rank for rank, sid in enumerate(ids, start=1)}
+        ranks: dict[str, int] = {}
+        for rank, vid in enumerate(res.get("ids", [[]])[0], start=1):
+            ent, doc, pidx = _entity_of(vid)
+            entity_meta[ent] = (doc, pidx)
+            if ent not in ranks or rank < ranks[ent]:
+                ranks[ent] = rank
+        per_source[name] = ranks
     if not per_source:
         return []
 
-    # 3-4. fuse, then validate each candidate against SQLite
+    # 3-4. fuse entities, then validate each against SQLite (orphans excluded)
     fused = retrieval.rrf_fuse(per_source, top_k)
     pool: list[dict] = []
-    for sid, score in fused:
-        sif = store.get(sid)            # active rows only -> orphans excluded
+    for entity, score in fused:
+        doc, pidx = entity_meta.get(entity, (entity, None))
+        sif = store.get(doc)
         if sif is None:
             continue
-        pool.append({
-            "id": sid,
-            "path": sif["file"]["path"],
-            "score": round(score, 6),
-            "caption": sif["scene"]["caption"],
-            "objects": [o["label"] for o in sif["objects"]],
-            "_sif": sif,
-        })
+        pool.append(_result_for(entity, doc, pidx, sif, score))
         if len(pool) >= max(limit * 3, 20):
             break
 
@@ -110,7 +138,7 @@ def search(store: Store, query: str, limit: int = 10,
     out = []
     for p in pool[:limit]:
         p = dict(p)
-        p.pop("_sif", None)
+        p.pop("_text", None)
         p["reranked"] = reranked
         out.append(p)
     return out

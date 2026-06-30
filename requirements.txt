@@ -13,9 +13,10 @@ python-multipart>=0.0.9
 # The engine runs without them: each extractor/embedder falls back to a
 # deterministic stub when its dependency (or the Ollama daemon) is unavailable.
 
-# Stage 5 (PDF) — uncomment as implemented
-# pdfplumber>=0.11.0
-# pdf2image>=1.17.0
+# Stage 5 (PDF) — pure-Python, no system deps. pypdfium2 (Apache/BSD) renders
+# pages for the vision path; rendering is optional (text-only without it).
+pdfplumber>=0.11.0
+pypdfium2>=4.30.0
 
 # Dev
 pytest>=8.0.0
