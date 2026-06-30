@@ -49,7 +49,30 @@ class _PeakRSS:
             self._thread.join(timeout=1)
 
 
-def benchmark(data_root: str, paths: list[str], max_workers: int | None = None) -> dict:
+def _warmup():
+    """Load every model once (on a throwaway image) so the timed run measures
+    warm per-image cost, not one-time model loading."""
+    import os
+    import tempfile
+    from PIL import Image
+    from . import pipeline
+
+    fd, p = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    try:
+        Image.new("RGB", (64, 64), (123, 80, 200)).save(p)
+        pipeline.process(p)   # exercises objects, OCR, scene VLM, embeddings
+    finally:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
+def benchmark(data_root: str, paths: list[str], max_workers: int | None = None,
+              warmup: bool = False) -> dict:
+    if warmup:
+        _warmup()
     store = Store(data_root)
     with _PeakRSS() as peak:
         report = runner.index_paths(store, paths, max_workers=max_workers)
@@ -57,6 +80,7 @@ def benchmark(data_root: str, paths: list[str], max_workers: int | None = None) 
 
     n = report["processed"]
     wall = report["wall_s"]
+    report["warmed"] = warmup
     report["sizing"] = workers.sizing_report()
     report["peak_rss_mb"] = round(peak.peak_mb)
     report["throughput_imgs_per_s"] = round(n / wall, 3) if wall > 0 else 0.0
@@ -71,7 +95,8 @@ def format_report(r: dict) -> str:
         f"budget {s['budget_mb']}MB ({int(s['budget_frac']*100)}%)",
         f"  workers        : {r['workers']} (cpu={s['cpu_count']}, "
         f"per-worker~{s['per_worker_mb']}MB, vlm_reserve={s['vlm_reserve_mb']}MB)",
-        f"  processed      : {r['processed']} images in {r['wall_s']}s",
+        f"  processed      : {r['processed']} images in {r['wall_s']}s"
+        f"{'  (warm)' if r.get('warmed') else '  (cold — incl. model load)'}",
         f"  throughput     : {r['throughput_imgs_per_s']} img/s",
         f"  peak RSS       : {r['peak_rss_mb']}MB",
         "  per-stage (avg ms / total s):",

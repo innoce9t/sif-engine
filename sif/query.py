@@ -130,10 +130,18 @@ def search(store: Store, query: str, limit: int = 10,
         if len(pool) >= max(limit * 3, 20):
             break
 
-    # 5. gated re-rank on a small relative margin
+    # 5. re-rank the candidate pool with the cross-encoder (retrieve-then-rerank:
+    # RRF gives recall, the cross-encoder gives precision and fixes RRF's
+    # over-crediting of an asset that merely appears in both collections). It's
+    # cheap on a ~20-item pool, so it runs by DEFAULT. Setting SIF_RERANK_GAP
+    # restores cost-gating: only re-rank when the top two are within that gap.
     reranked = False
-    if rerank and not _stubs() and retrieval.should_rerank([p["score"] for p in pool]):
-        pool, reranked = _neural_rerank(query, pool)
+    if rerank and not _stubs() and len(pool) > 1:
+        gap_env = os.environ.get("SIF_RERANK_GAP")
+        do_rerank = (gap_env is None
+                     or retrieval.should_rerank([p["score"] for p in pool], float(gap_env)))
+        if do_rerank:
+            pool, reranked = _neural_rerank(query, pool)
 
     out = []
     for p in pool[:limit]:

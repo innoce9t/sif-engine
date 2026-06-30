@@ -25,10 +25,11 @@ import os
 K_RRF = 60
 DEFAULT_TOP_K = 50
 DEFAULT_WEIGHTS = {"visual": 1.0, "text": 1.0}
-# Rerank when top-1 vs top-2 differ by less than this fraction. Conservative by
-# default (bounds cross-encoder cost); raise via SIF_RERANK_GAP to re-rank more
-# aggressively, which improves quality on the known RRF over-crediting case
-# (docs/stage3-findings.md) at the cost of more compute per query.
+# Optional cost-gating threshold. By default the cross-encoder re-ranks the
+# candidate pool on every query (retrieve-then-rerank — see query.search). If
+# SIF_RERANK_GAP is set, re-ranking is GATED to fire only when the top two RRF
+# scores are within this fraction (skip when already decisively separated, to
+# save compute).
 RERANK_GAP = float(os.environ.get("SIF_RERANK_GAP", "0.05"))
 
 

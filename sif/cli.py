@@ -122,7 +122,8 @@ def cmd_bench(args):
     if not targets:
         print(f"No images found at {args.path}")
         return
-    print(bench.format_report(bench.benchmark(args.data, targets, max_workers=args.workers)))
+    print(bench.format_report(bench.benchmark(
+        args.data, targets, max_workers=args.workers, warmup=args.warmup)))
 
 
 def cmd_watch(args):
@@ -183,6 +184,8 @@ def main(argv=None):
     pb = sub.add_parser("bench", help="benchmark the concurrent indexer")
     pb.add_argument("path")
     pb.add_argument("--workers", type=int, default=None)
+    pb.add_argument("--warmup", action="store_true",
+                    help="pre-load models so timings exclude one-time model load")
     pb.set_defaults(func=cmd_bench)
 
     pw = sub.add_parser("watch", help="watch a folder and index new/changed files")

@@ -122,7 +122,9 @@ design. Those write-ups are part of the artifact:
 - [Stage 3](docs/stage3-findings.md) — an RRF over-crediting case (known
   limitation; tunable via `SIF_RERANK_GAP`)
 - [Stage 4](docs/stage4-findings.md) — a concurrency bug the benchmark caught;
-  first measured numbers (peak RSS ~2GB, well under a 14GB budget)
+  measured warm throughput (~0.45 img/s with all real models, peak RSS ~2GB on a
+  20GB/12-core box) and the parallelism ceiling that follows from serialized
+  model inference
 
 ---
 
@@ -157,9 +159,12 @@ the architectural-evolution story.
 - Uses **small edge models** on purpose — it wins on cost/privacy/offline, not
   on raw model quality.
 - It's an **archive/search** engine, not real-time video analytics.
-- A known **RRF ranking** edge case (an asset present in more collections can be
-  over-credited) is documented and gated behind a tunable knob, pending a
-  labeled relevance set to calibrate against.
+- Ranking precision depends on the **cross-encoder re-rank** (on by default). If
+  `sentence-transformers` isn't installed it degrades to RRF-only, which has a
+  known over-crediting edge case (see [Stage 3 findings](docs/stage3-findings.md)).
+- If the **Ollama VLM daemon is down**, scene captions fall back to stubs
+  *silently* (by design) — `meta.models_used` shows `scene: stub` so it's
+  detectable, but watch for it in deployment.
 
 ## License
 

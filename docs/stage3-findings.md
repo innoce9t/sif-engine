@@ -56,3 +56,21 @@ These are tuning decisions that need real measurements. They're deferred to the
 **Stage 4 benchmark harness** (where the spec's numbers become measured facts)
 rather than hard-coded with an untuned threshold now. The cross-encoder is the
 quality backstop and already corrects the case when it runs.
+
+## Resolution (Stage 6)
+
+Fixed by adopting **standard retrieve-then-rerank**: RRF gives the candidate
+*recall*, and the cross-encoder now re-ranks the (≤20-item) pool on **every**
+query for *precision* — it's only tens of ms, so the earlier "rerank rarely"
+gate was the wrong default. No magic distance threshold was needed.
+
+Validated with real models: `"two men in dark suits"` -> the actual photo of two
+men in suits (not the over-credited dual-collection asset); `"warehouse safety
+hiring"` -> the correct PDF page. `SIF_RERANK_GAP` remains as an opt-in
+cost-gate (re-rank only when the top two are within the gap) for very large
+corpora where always-reranking the pool isn't desired.
+
+*Operational note:* when the Ollama VLM daemon is down, scene captions fall back
+to stubs **silently** (by design), which quietly degrades semantic quality.
+`meta.models_used` reports `scene: stub` so it's discoverable — worth surfacing
+in any deployment health check.

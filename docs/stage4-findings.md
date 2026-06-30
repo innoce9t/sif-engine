@@ -46,10 +46,34 @@ per-stage   : vlm ~2.2s/img, finalize(embed) ~5.4s/img, write ~80ms/img
 14GB budget for this small run — consistent with the per-worker estimate, to be
 confirmed at higher worker counts and corpus sizes.
 
+## Finding 3 — warm benchmark (Stage 6): throughput + a parallelism ceiling
+
+`sif bench --warmup` pre-loads every model so the timed run measures warm
+per-image cost. Over 24 images with all real models (YOLO + OCR + Moondream +
+nomic) on a 20GB / 12-core machine:
+
+```
+processed   : 24 images in 53.0s  (warm)
+throughput  : ~0.45 img/s
+peak RSS    : ~2.0GB              # confirms the per-worker estimate — far under
+                                  # the 14GB budget at 12 workers
+per-stage   : vlm ~1.3s/img, finalize(embed) ~0.85s/img, write ~33ms/img
+```
+
+**Parallelism ceiling (important):** the per-stage `extract` average looks huge
+(~20s/img) but is *wall time including lock wait*, not inference time. Because
+YOLO and OCR inference are **serialized by per-model locks** (Finding 1), 12
+extraction workers all queue on those two locks — so worker count beyond a
+**small number (~2-4)** buys little for the model stages. The real throughput is
+bounded by the serialized models + the single VLM worker; the win is **stage
+pipelining** (extraction of later items overlapping the VLM/writer), not wide
+extraction fan-out. RAM-aware sizing still matters as a *cap*, but the practical
+sweet spot is a handful of workers, not one-per-core.
+
+*(Caveat: synthetic noise images are adversarial for OCR, which inflates the
+extract stage; real photos/documents differ. The throughput/RSS shape holds.)*
+
 ## Still outstanding (carried forward)
 
-- **Warm, multi-image benchmark** to get a representative throughput/img and to
-  validate the per-worker MB estimate at scale.
-- **Stage 3 RRF tuning** (docs/stage3-findings.md) — needs a small labeled
-  relevance set to measure against before adjusting fusion/gating; the harness
-  is now in place to support that measurement.
+- **Stage 3 RRF tuning** — RESOLVED in Stage 6 via retrieve-then-rerank
+  (docs/stage3-findings.md). The cross-encoder now re-ranks by default.
