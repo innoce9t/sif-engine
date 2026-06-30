@@ -5,7 +5,8 @@ query forever — without sending raw images to a cloud API.
 
 **Docs:** [architecture decisions](docs/adr/) ·
 [Stage 1 real-model findings](docs/stage1-findings.md) ·
-[Stage 3 retrieval findings](docs/stage3-findings.md)
+[Stage 3 retrieval findings](docs/stage3-findings.md) ·
+[Stage 4 concurrency findings](docs/stage4-findings.md)
 
 ## Build Stages
 

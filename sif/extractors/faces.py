@@ -49,8 +49,12 @@ def extract_faces(image_path: str) -> list[Face]:
     rgb = np.asarray(Image.open(image_path).convert("RGB"))
     bgr = rgb[:, :, ::-1]
 
+    # Serialize inference across extraction threads (see Stage 4 findings).
+    with _lock:
+        faces = app.get(bgr)
+
     out: list[Face] = []
-    for i, f in enumerate(app.get(bgr)):
+    for i, f in enumerate(faces):
         out.append(
             Face(
                 face_id=f"{os.path.basename(image_path)}#{i}",

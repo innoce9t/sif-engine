@@ -44,7 +44,12 @@ def extract_objects(image_path: str) -> list[DetectedObject]:
     """Detect objects, returning the same DetectedObject list shape as the stub."""
     model = _get_model()
     out: list[DetectedObject] = []
-    for r in model(image_path, verbose=False):
+    # Ultralytics inference is NOT thread-safe (concurrent calls race on the
+    # lazy layer-fuse: "'Conv' object has no attribute 'bn'"), so serialize the
+    # inference. Different models still overlap; see Stage 4 findings.
+    with _lock:
+        results = list(model(image_path, verbose=False))
+    for r in results:
         names = r.names
         for b in r.boxes:
             cls = int(b.cls[0])

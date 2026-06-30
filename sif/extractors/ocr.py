@@ -73,10 +73,13 @@ def _texts_from_result(result) -> list[str]:
 
 def extract_ocr(image_path: str) -> OCRResult:
     engine = _get_engine()
-    try:
-        result = engine.ocr(image_path)
-    except TypeError:
-        result = engine.ocr(image_path, cls=True)
+    # Serialize inference: the PaddleOCR engine is shared across extraction
+    # threads and not guaranteed thread-safe (see Stage 4 findings).
+    with _lock:
+        try:
+            result = engine.ocr(image_path)
+        except TypeError:
+            result = engine.ocr(image_path, cls=True)
 
     blocks = _texts_from_result(result)
     full = "\n".join(blocks)
