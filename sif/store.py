@@ -241,6 +241,25 @@ class Store:
             "SELECT sif_json FROM sif WHERE id=? AND state='active'", (sid,)).fetchone()
         return json.loads(row[0]) if row else None
 
+    def list_assets(self, limit: int = 200, offset: int = 0) -> list[dict]:
+        """Indexed assets, newest first, as light summaries for the Library UI."""
+        rows = self.db.execute(
+            "SELECT id, path, sif_json FROM sif WHERE state='active' AND indexed=1 "
+            "ORDER BY updated_at DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+        out = []
+        for sid, path, sj in rows:
+            d = json.loads(sj)
+            kind = d.get("kind", "image")
+            caption = d.get("scene", {}).get("caption", "")
+            if kind == "pdf":
+                caption = caption or f"PDF · {len(d.get('pages', []))} pages"
+            out.append({
+                "id": sid, "path": path, "kind": kind, "caption": caption,
+                "has_text": bool(d.get("ocr", {}).get("has_text")),
+                "n_faces": len(d.get("faces", [])),
+            })
+        return out
+
     def get_meta(self, path: str) -> dict | None:
         """Lightweight row state for a path (or None if not active)."""
         row = self.db.execute(
