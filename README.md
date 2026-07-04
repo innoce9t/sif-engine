@@ -64,8 +64,26 @@ the point.)*
   → single writer) with RAM-aware worker sizing and a benchmark harness.
 - **Runs without the models** — every extractor falls back to a deterministic
   stub when its dependency is missing, so the engine always runs (great for CI).
-- **Interfaces** — a CLI and a FastAPI web inspector (upload → see the SIF JSON
-  + semantic search).
+- **Interfaces** — a CLI, a **FastAPI web app**, and an **MCP server**.
+
+### Web app (`python -m sif.cli serve`)
+A tabbed local UI over the engine:
+- **Library** — browse everything indexed (thumbnails incl. rendered PDF pages);
+  per-item *more-like-this*, *reveal in folder*, and *delete*.
+- **Search** — text search with filters (type / has-text / object) and match
+  badges (which space hit), **plus reverse image search** (find visually similar
+  via CLIP).
+- **Ask** — RAG: retrieves the top matches and has a local LLM answer from them
+  (cited), so raw data stays on-device.
+- **Add** — analyze one image, or bulk-index a folder (async, live progress) and
+  **Watch** a folder for auto-indexing.
+- **Duplicates** — scan a folder for exact / pixel / perceptual duplicate files.
+- **Settings** — model health, VLM picker, and the faces on/off toggle.
+
+### MCP server (`python -m sif.mcp_server`)
+Exposes `sif_search` / `sif_stats` as tools so an AI agent can query your local
+archive — the engine does the retrieval, the agent reasons over results, and the
+images never leave the machine. Needs `pip install "mcp[cli]"`.
 
 ---
 

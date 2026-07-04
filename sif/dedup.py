@@ -71,3 +71,36 @@ def hamming(a_hex: str, b_hex: str) -> int:
     if not a_hex or not b_hex:
         return 64
     return bin(int(a_hex, 16) ^ int(b_hex, 16)).count("1")
+
+
+def duplicate_groups(paths: list[str],
+                     threshold: int = DEFAULT_PHASH_THRESHOLD) -> list[list[str]]:
+    """Group files on disk into duplicate/near-duplicate clusters via the three
+    tiers (exact bytes / identical pixels / perceptual). Returns groups of >1
+    path. Useful for cleaning a folder BEFORE indexing (the index itself dedups)."""
+    from collections import defaultdict
+    hs = [(p, hashes(p)) for p in paths]
+    used: set[str] = set()
+    groups: list[list[str]] = []
+
+    by_key: dict[str, list[str]] = defaultdict(list)
+    for p, h in hs:
+        by_key[h.pixel_hash or h.sha256].append(p)   # tiers 1-2
+    for members in by_key.values():
+        if len(members) > 1:
+            groups.append(list(members))
+            used.update(members)
+
+    rest = [(p, h) for p, h in hs if p not in used and h.phash]   # tier 3
+    for i, (p, h) in enumerate(rest):
+        if p in used:
+            continue
+        grp = [p]
+        for q, h2 in rest[i + 1:]:
+            if q not in used and hamming(h.phash, h2.phash) <= threshold:
+                grp.append(q)
+                used.add(q)
+        if len(grp) > 1:
+            used.add(p)
+            groups.append(grp)
+    return groups
