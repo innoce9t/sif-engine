@@ -23,7 +23,7 @@ import os
 import tempfile
 
 from .schema import SIF, Page, Region, new_sif
-from . import dedup, extractors
+from . import dedup, extractors, clip_embed
 from .embedding import embed, active_model
 
 DPI = int(os.environ.get("SIF_PDF_DPI", "150"))
@@ -85,6 +85,7 @@ def _region_from_pil(pil, region_id: str, bbox=None) -> Region:
         pil.save(tmp)
         objects = extractors.extract_objects(tmp)
         scene = extractors.extract_scene(tmp)
+        clip_vec = clip_embed.embed_image(tmp)
     finally:
         try:
             os.remove(tmp)
@@ -94,6 +95,7 @@ def _region_from_pil(pil, region_id: str, bbox=None) -> Region:
     parts = [scene.caption, *scene.tags, *(o.label for o in objects)]
     region.visual_input = " ".join(p for p in parts if p).strip()
     region.visual = embed(region.visual_input, kind="document") if region.visual_input else []
+    region.clip = clip_vec
     return region
 
 

@@ -21,7 +21,7 @@ import os
 
 from .store import Store
 from .embedding import embed
-from . import retrieval
+from . import retrieval, clip_embed
 
 
 def _stubs() -> bool:
@@ -98,16 +98,21 @@ def search(store: Store, query: str, limit: int = 10,
     q = embed(query, kind="query")
     if not any(q):
         return []
+    q_clip = clip_embed.embed_text(query)   # [] when CLIP is unavailable
 
-    # 1. retrieve ranks from each collection, then 2. aggregate raw vectors up to
-    # their PAGE/asset ENTITY (best rank per entity).
+    # 1. retrieve ranks from each collection (each with its matching query
+    # vector — nomic for visual/text, CLIP for the pixel space), then
+    # 2. aggregate raw vectors up to their PAGE/asset ENTITY (best rank).
     per_source: dict[str, dict[str, int]] = {}
     entity_meta: dict[str, tuple[str, int | None]] = {}
-    for name, coll in (("visual", store.visual), ("text", store.text)):
+    for name, coll, qvec in (("visual", store.visual, q), ("text", store.text, q),
+                             ("clip", store.clip, q_clip)):
+        if not any(qvec):
+            continue
         n = coll.count()
         if n == 0:
             continue
-        res = coll.query(query_embeddings=[q], n_results=min(top_k, n))
+        res = coll.query(query_embeddings=[qvec], n_results=min(top_k, n))
         ranks: dict[str, int] = {}
         for rank, vid in enumerate(res.get("ids", [[]])[0], start=1):
             ent, doc, pidx = _entity_of(vid)

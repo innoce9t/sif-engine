@@ -50,8 +50,11 @@ the point.)*
   Arabic), optional face embeddings (**off by default** — biometric privacy),
   and text embeddings (nomic-embed-text v1.5).
 - **Semantic search** — natural-language queries over a **multi-vector** index
-  (separate visual and OCR-text spaces) fused with Reciprocal Rank Fusion and an
-  optional gated cross-encoder re-rank.
+  fused with Reciprocal Rank Fusion + a cross-encoder re-rank. Three spaces:
+  a **description** vector (caption + objects), an **OCR-text** vector, and a
+  **CLIP pixel** vector (raw visual content, so queries can match what the
+  caption never described). CLIP is optional — the engine runs on the first two
+  when it's unavailable.
 - **Multi-page PDFs** — page-classified ingestion into a hierarchical index;
   search returns the matching **page**.
 - **Crash-safe storage** — SQLite is the source of truth; the ChromaDB vector
@@ -150,6 +153,7 @@ the architectural-evolution story.
 | `SIF_USE_STUBS=1` | force deterministic stubs everywhere |
 | `SIF_ENABLE_FACES=1` | opt in to face embeddings (off by default) |
 | `SIF_VLM_MODEL` | scene VLM served by Ollama (default `moondream`) |
+| `SIF_CLIP_MODEL` | CLIP pixel-embedding model (default `clip-ViT-B-32`) |
 | `SIF_OCR_LANG` / `SIF_OCR_MKLDNN` | OCR language / re-enable MKL-DNN |
 | `SIF_RERANK_GAP` | re-rank gate (raise to re-rank more aggressively) |
 | `SIF_RAM_BUDGET_FRAC`, `SIF_PER_WORKER_MB`, … | RAM-aware worker sizing |
@@ -159,6 +163,10 @@ the architectural-evolution story.
 - Uses **small edge models** on purpose — it wins on cost/privacy/offline, not
   on raw model quality.
 - It's an **archive/search** engine, not real-time video analytics.
+- The **CLIP** space improves *recall* (surfaces visual matches the caption
+  missed), but the final cross-encoder re-rank scores *text* (caption/OCR/labels)
+  — so a purely-visual hit with a weak caption is retrieved but may not top the
+  list. Blending the CLIP score into the final ranking is a natural next step.
 - Ranking precision depends on the **cross-encoder re-rank** (on by default). If
   `sentence-transformers` isn't installed it degrades to RRF-only, which has a
   known over-crediting edge case (see [Stage 3 findings](docs/stage3-findings.md)).

@@ -76,6 +76,7 @@ class Store:
         self.chroma = chromadb.PersistentClient(path=os.path.join(self.root, "chroma"))
         self.visual = self.chroma.get_or_create_collection("visual")
         self.text = self.chroma.get_or_create_collection("text")
+        self.clip = self.chroma.get_or_create_collection("clip")   # CLIP pixel vectors
 
     # -- vector helpers ---------------------------------------------------
     def _write_vectors_from_dict(self, sid: str, d: dict):
@@ -86,15 +87,16 @@ class Store:
         if d.get("kind") == "pdf":
             for page in d.get("pages", []):
                 pidx = page.get("page_index")
+                meta = {"path": sid, "sif_id": sid, "page": pidx}
                 tv = page.get("text_vector") or []
                 if any(tv):
-                    self.text.upsert(ids=[f"{sid}#p{pidx}"], embeddings=[list(tv)],
-                                     metadatas=[{"path": sid, "sif_id": sid, "page": pidx}])
+                    self.text.upsert(ids=[f"{sid}#p{pidx}"], embeddings=[list(tv)], metadatas=[meta])
                 for region in page.get("regions", []):
-                    vv = region.get("visual") or []
-                    if any(vv):
-                        self.visual.upsert(ids=[region["region_id"]], embeddings=[list(vv)],
-                                           metadatas=[{"path": sid, "sif_id": sid, "page": pidx}])
+                    rid = region["region_id"]
+                    if any(region.get("visual") or []):
+                        self.visual.upsert(ids=[rid], embeddings=[list(region["visual"])], metadatas=[meta])
+                    if any(region.get("clip") or []):
+                        self.clip.upsert(ids=[rid], embeddings=[list(region["clip"])], metadatas=[meta])
         else:
             emb = d.get("embeddings", {})
             meta = {"path": sid, "sif_id": sid}
@@ -102,12 +104,14 @@ class Store:
                 self.visual.upsert(ids=[sid], embeddings=[list(emb["visual"])], metadatas=[meta])
             if any(emb.get("text") or []):
                 self.text.upsert(ids=[sid], embeddings=[list(emb["text"])], metadatas=[meta])
+            if any(emb.get("clip") or []):
+                self.clip.upsert(ids=[sid], embeddings=[list(emb["clip"])], metadatas=[meta])
 
     def _purge_vectors(self, sid: str):
         # Delete every vector belonging to this asset (image = 1 each; PDF = many
         # page/region vectors). where=path catches them all; ids=[sid] is a
         # belt-and-suspenders for the image case. Absent deletes are no-ops.
-        for coll in (self.visual, self.text):
+        for coll in (self.visual, self.text, self.clip):
             try:
                 coll.delete(where={"path": sid})
             except Exception:
@@ -196,7 +200,7 @@ class Store:
         active = {r[0] for r in self.db.execute(
             "SELECT id FROM sif WHERE state='active'").fetchall()}
         orphans = 0
-        for coll in (self.visual, self.text):
+        for coll in (self.visual, self.text, self.clip):
             got = coll.get()
             ids = got.get("ids", [])
             metas = got.get("metadatas", []) or [{}] * len(ids)

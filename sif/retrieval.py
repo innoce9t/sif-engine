@@ -24,7 +24,7 @@ import os
 
 K_RRF = 60
 DEFAULT_TOP_K = 50
-DEFAULT_WEIGHTS = {"visual": 1.0, "text": 1.0}
+DEFAULT_WEIGHTS = {"visual": 1.0, "text": 1.0, "clip": 1.0}
 # Optional cost-gating threshold. By default the cross-encoder re-ranks the
 # candidate pool on every query (retrieve-then-rerank — see query.search). If
 # SIF_RERANK_GAP is set, re-ranking is GATED to fire only when the top two RRF

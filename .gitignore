@@ -9,6 +9,9 @@ venv/
 
 # SIF runtime data
 sif_data/
+screenshots_index/
+clip_demo/
+_demo_data/
 chroma/
 *.db
 *.sqlite

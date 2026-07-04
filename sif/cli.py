@@ -98,6 +98,7 @@ def cmd_stats(args):
     print(f"Indexed assets: {store.count()}")
     print(f"Visual vectors: {store.visual.count()}")
     print(f"Text vectors:   {store.text.count()}")
+    print(f"CLIP vectors:   {store.clip.count()}")
     store.close()
 
 

@@ -106,6 +106,7 @@ def api_stats():
             "indexed": s.count(),
             "visual_vectors": s.visual.count(),
             "text_vectors": s.text.count(),
+            "clip_vectors": s.clip.count(),
         })
 
 

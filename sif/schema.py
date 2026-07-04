@@ -70,6 +70,7 @@ class Embeddings:
     """
     visual: list[float] = field(default_factory=list)   # caption + tags + objects
     text: list[float] = field(default_factory=list)     # OCR text only
+    clip: list[float] = field(default_factory=list)     # CLIP embedding of the pixels
     visual_input: str = ""   # the synthetic string that produced `visual`
     text_input: str = ""     # the synthetic string that produced `text`
     model: str = ""
@@ -85,6 +86,7 @@ class Region:
     scene: Scene = field(default_factory=Scene)
     visual_input: str = ""
     visual: list[float] = field(default_factory=list)
+    clip: list[float] = field(default_factory=list)   # CLIP embedding of the region pixels
 
 
 @dataclass

@@ -19,7 +19,7 @@ import os
 import time
 
 from .schema import SIF, new_sif
-from . import extractors, dedup
+from . import extractors, dedup, clip_embed
 from .embedding import embed, active_model
 
 
@@ -75,6 +75,7 @@ def finalize(sif: SIF, started_at: float | None = None) -> SIF:
     sif.embeddings.text_input = build_text_input(sif)
     sif.embeddings.visual = embed(sif.embeddings.visual_input, kind="document")
     sif.embeddings.text = embed(sif.embeddings.text_input, kind="document")
+    sif.embeddings.clip = clip_embed.embed_image(sif.file.path)   # [] if CLIP off
     sif.embeddings.model = active_model()
 
     sif.meta = {
