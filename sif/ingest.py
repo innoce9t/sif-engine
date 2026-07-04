@@ -35,7 +35,9 @@ def _build(path: str, h: dedup.Hashes):
     return process(path, file_hashes=h)
 
 
-def ingest(store: Store, path: str) -> Result:
+def ingest(store: Store, path: str, force: bool = False) -> Result:
+    """Index a file. ``force=True`` re-processes even an unchanged/duplicate file
+    (used by 're-index' to upgrade an existing index — e.g. add CLIP/faces)."""
     if pdf.is_pdf(path) and not pdf.deps_available():
         return Result("skipped", path, detail="pdf deps missing (pip install pdfplumber)")
 
@@ -43,14 +45,15 @@ def ingest(store: Store, path: str) -> Result:
 
     meta = store.get_meta(path)
     if meta is not None:
-        if meta["sha256"] == h.sha256:
+        if not force and meta["sha256"] == h.sha256:
             return Result("unchanged", path)
         store.update(_build(path, h))
         return Result("updated", path)
 
-    dup = store.find_duplicate(h)
-    if dup is not None:
-        return Result("duplicate", path, detail=f"{dup[1]}->{dup[0]}")
+    if not force:
+        dup = store.find_duplicate(h)
+        if dup is not None:
+            return Result("duplicate", path, detail=f"{dup[1]}->{dup[0]}")
 
     store.insert(_build(path, h))
     return Result("indexed", path)

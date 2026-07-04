@@ -103,13 +103,12 @@ def api_process(file: UploadFile = File(...), save: str = Form("false")):
 # --------------------------------------------------------------------------
 # Bulk folder indexing (async job)
 # --------------------------------------------------------------------------
-def _run_index_job(job_id: str, folder: str):
+def _run_index_job(job_id: str, paths: list[str], force: bool = False):
     job = _jobs[job_id]
     try:
-        from . import runner, pdf
+        from . import runner
         from .ingest import ingest
         st = Store(DATA_ROOT)                      # own connection for the job
-        paths = _collect(folder)
         images = [p for p in paths if os.path.splitext(p)[1].lower() in IMAGE_EXTS]
         pdfs = [p for p in paths if os.path.splitext(p)[1].lower() in DOC_EXTS]
         job["total"] = len(paths)
@@ -119,11 +118,11 @@ def _run_index_job(job_id: str, folder: str):
             job["last"] = os.path.basename(path)
 
         if images:
-            rep = runner.index_paths(st, images, progress=prog)
+            rep = runner.index_paths(st, images, progress=prog, force=force)
             for k, v in rep["stats"].items():
                 job["tally"][k] = job["tally"].get(k, 0) + v
         for p in pdfs:
-            r = ingest(st, p)
+            r = ingest(st, p, force=force)
             job["done"] += 1
             job["last"] = os.path.basename(p)
             job["tally"][r.status] = job["tally"].get(r.status, 0) + 1
@@ -135,14 +134,31 @@ def _run_index_job(job_id: str, folder: str):
         job["error"] = str(e)
 
 
+def _start_job(paths: list[str], force: bool = False) -> str:
+    job_id = uuid.uuid4().hex[:12]
+    _jobs[job_id] = {"status": "running", "total": len(paths), "done": 0, "last": "", "tally": {}}
+    threading.Thread(target=_run_index_job, args=(job_id, paths, force), daemon=True).start()
+    return job_id
+
+
 @app.post("/api/index-folder")
-def api_index_folder(path: str = Form(...)):
+def api_index_folder(path: str = Form(...), force: str = Form("false")):
     if not os.path.isdir(path):
         return JSONResponse({"error": f"not a folder: {path}"}, status_code=400)
-    job_id = uuid.uuid4().hex[:12]
-    _jobs[job_id] = {"status": "running", "total": 0, "done": 0, "last": "", "tally": {}}
-    threading.Thread(target=_run_index_job, args=(job_id, path), daemon=True).start()
-    return JSONResponse({"job": job_id})
+    force_b = force.lower() in ("1", "true", "on", "yes")
+    return JSONResponse({"job": _start_job(_collect(path), force=force_b)})
+
+
+@app.post("/api/reindex-all")
+def api_reindex_all():
+    """Force re-process every already-indexed asset (to add CLIP/faces to an
+    index built before those were enabled). Skips files no longer on disk."""
+    with _lock:
+        paths = [a["path"] for a in _get_store().list_assets(limit=100000)]
+    paths = [p for p in paths if os.path.exists(p)]
+    if not paths:
+        return JSONResponse({"error": "nothing to re-index (no existing files found)"}, status_code=400)
+    return JSONResponse({"job": _start_job(paths, force=True), "count": len(paths)})
 
 
 @app.get("/api/index-status")
@@ -507,8 +523,14 @@ _PAGE = r"""<!doctype html>
       <div class="row"><input id="folder" type="text" placeholder="C:\Users\you\Pictures\Screenshots"/>
         <button id="idxBtn" class="btn">Index folder</button>
         <button id="watchBtn" class="btn" style="background:#347d39">Watch</button></div>
+      <label class="switch"><input id="forceIdx" type="checkbox"/> re-process files already indexed (adds CLIP / faces)</label>
       <div class="bar" id="idxBarWrap" style="display:none"><i id="idxBar"></i></div>
       <div id="idxStatus" class="dim" style="margin-top:8px"></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Re-index everything</h2>
+      <div class="row"><button id="reidxBtn" class="btn">Re-index all indexed assets</button></div>
+      <div class="dim" style="margin-top:6px">Force-reprocess every asset already in the index — use this to add CLIP vectors (or faces) to an index built before they were enabled.</div>
     </div>
   </section>
 
@@ -660,10 +682,17 @@ go.onclick=async()=>{
 // bulk index
 $('#idxBtn').onclick=async()=>{
   const path=$('#folder').value.trim();if(!path)return;
-  const fd=new FormData();fd.append('path',path);
+  const fd=new FormData();fd.append('path',path);fd.append('force',$('#forceIdx').checked?'true':'false');
   const r=await fetch('/api/index-folder',{method:'POST',body:fd});
   if(!r.ok){$('#idxStatus').innerHTML='<span class="err">'+(await r.json()).error+'</span>';return}
   $('#idxBarWrap').style.display='block';poll((await r.json()).job);
+};
+$('#reidxBtn').onclick=async()=>{
+  if(!confirm('Re-process every indexed asset? This re-runs the models on all of them.'))return;
+  const r=await fetch('/api/reindex-all',{method:'POST'});
+  const j=await r.json();
+  if(!r.ok){$('#idxStatus').innerHTML='<span class="err">'+j.error+'</span>';return}
+  $('#idxBarWrap').style.display='block';$('#idxStatus').textContent='Re-indexing '+j.count+' assets…';poll(j.job);
 };
 async function poll(job){
   const j=await (await fetch('/api/index-status?job='+job)).json();

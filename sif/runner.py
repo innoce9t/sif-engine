@@ -42,14 +42,22 @@ def _near(phashes: list[str], ph: str,
     return bool(ph) and any(dedup.hamming(ph, p) <= threshold for p in phashes)
 
 
-def _dedup_plan(store: Store, paths: list[str]):
+def _dedup_plan(store: Store, paths: list[str], force: bool = False):
     """Single-threaded pre-pass: decide insert/update/skip per path, against the
-    store and within the batch itself. Returns (plan, tally)."""
+    store and within the batch itself. Returns (plan, tally). ``force`` bypasses
+    the dedup skips and re-processes everything (re-index)."""
     plan: list[tuple] = []
     tally: dict[str, int] = {}
     seen_sha: set[str] = set()
     seen_pixel: set[str] = set()
     seen_phash: list[str] = []
+
+    if force:
+        for path in paths:
+            h = dedup.hashes(path)
+            action = "update" if store.get_meta(path) is not None else "insert"
+            plan.append((path, h, action))
+        return plan, tally
 
     for path in paths:
         h = dedup.hashes(path)
@@ -91,14 +99,14 @@ def _summarize(timings: dict[str, list[float]]) -> dict:
 
 
 def index_paths(store: Store, paths: list[str], max_workers: int | None = None,
-                progress=None) -> dict:
+                progress=None, force: bool = False) -> dict:
     """Index ``paths`` through the decoupled concurrent pipeline. Returns a
     report dict: tally of statuses, worker count, processed count, per-stage
-    timings, and wall time."""
+    timings, and wall time. ``force`` re-processes already-indexed files."""
     if max_workers is None:
         max_workers = workers.recommended_workers()
 
-    plan, tally = _dedup_plan(store, paths)
+    plan, tally = _dedup_plan(store, paths, force=force)
 
     vlm_q: queue.Queue = queue.Queue(maxsize=max(2, max_workers * 4))
     write_q: queue.Queue = queue.Queue()
