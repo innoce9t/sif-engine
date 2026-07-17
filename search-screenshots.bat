@@ -12,6 +12,11 @@ if not exist "%PY%" set "PY=python"
 set "DATA=%~dp0screenshots_index"
 set "SIF_DATA=%DATA%"
 
+REM Light VLM for bulk indexing (runs on every image); big model only for Ask.
+REM gemma4 (8B) is too heavy to bulk-index on limited RAM — it swaps and stalls.
+set "SIF_VLM_MODEL=gemma3:4b"
+set "SIF_RAG_MODEL=gemma4"
+
 echo Starting SIF Screenshot Search...
 echo   Index: %DATA%
 echo   URL:   http://127.0.0.1:8000
