@@ -10,6 +10,12 @@ is cheap text/vector work instead of a fresh, expensive vision-API call.
 
 > Apache-2.0 · local-first · CPU-friendly · open-core ([COMMERCIAL.md](COMMERCIAL.md))
 
+![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![ChromaDB](https://img.shields.io/badge/ChromaDB-vector%20store-4f46e5)
+![Ollama](https://img.shields.io/badge/Ollama-local%20models-000000)
+![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
+
 ---
 
 ## The problem
@@ -196,3 +202,8 @@ the architectural-evolution story.
 
 Apache-2.0 ([LICENSE](LICENSE)). Open-core model — see [COMMERCIAL.md](COMMERCIAL.md).
 © 2026 Ahsan Nawazish.
+
+## Author
+
+Built by **Ahsan Nawazish** — AI / ML Engineer specializing in LLM, RAG, and semantic-search systems.
+[Portfolio](https://ahsan.live) · [LinkedIn](https://linkedin.com/in/anawazish) · [GitHub](https://github.com/innoce9t)
